@@ -33,8 +33,7 @@ class GAFFparms:
                     ix += 1
                     continue
                 main[ix].append(line.strip())
-        self.main = main
-        self.make_tables()
+        self.make_tables(main)
 
     def _asdframe(self,table,skip=0,patt=None,names=None):
         # called by self.make_tables()
@@ -54,10 +53,9 @@ class GAFFparms:
             fields.append(fd[1:])
         return pd.DataFrame(fields,index=index,columns=names)
 
-    def make_tables(self):
+    def make_tables(self,main):
         # calls self._asdframe()
         # called by self.read()
-        main = self.main
         defpatt = '[ ]{2,}'
         tables = OrderedDict()
         tables['atoms'] = self._asdframe(main[0],1,defpatt,('mass','unknown'))
@@ -154,7 +152,7 @@ class GAFFparms:
 
     def get_matches(self,keys):
         # keys is the object created by MolecGraph class        
-        self.keys = keys
+        self.set_keys(keys)
         index = OrderedDict()
         for x in ['atoms','bonds','angles','propdihedrals','imprdihedrals']:
             index[x] = getattr(self,'match_'+x)()
@@ -181,8 +179,8 @@ class GAFFparms:
             n = len(parms.index[0])
             replace = lambda n: lambda x: x if x else (pd.np.nan,)*n
             newkeys = map(replace(n),keys)
-            atypes = map('atomtype_{:d}'.format,range(n))
-            atoms = map('atom_{:d}'.format,range(n))
+            atypes = map('atomtype_{:d}'.format,range(1,n+1))
+            atoms = map('atom_{:d}'.format,range(1,n+1))
         else:
             newkeys = keys
             atypes = ['atomtype']
@@ -202,7 +200,7 @@ class GAFFparms:
             x_ = x if 'dihedrals' not in x else 'dihedrals'
             extracted[x] = self.merge(self.parms[x],self.index[x],self.keys.index[x_])
         missing = extracted['propdihedrals'].ix[:,-1].isnull()
-        atoms = map('atom_{:d}'.format,range(4))
+        atoms = map('atom_{:d}'.format,range(1,4+1))
         if pd.np.any(missing):
             extracted['dihedrals'] = pd.merge(extracted['propdihedrals'].ix[missing,atoms],
                                               extracted['imprdihedrals'],on=atoms,
@@ -210,6 +208,20 @@ class GAFFparms:
         else:
             extracted['dihedrals'] = extracted['propdihedrals']
         self.extracted = extracted
+
+    def lennjopairs(self,atoms):
+        def combine(rstar,epsilon):
+            rstar_ = rstar.mean()
+            epsilon_ = epsilon.prod()**0.5
+            return (epsilon_*rstar_**12,2*epsilon_*rstar_**6)
+        sorted_atoms = sorted(atoms)
+        ljp = self.parms['lennjo'].convert_objects(convert_numeric=True)
+        self.ljparms = pd.DataFrame([
+            (i,j) + combine(ljp.ix[[i,j],'Rstar'],ljp.ix[[i,j],'epsilon'])
+            for i in sorted_atoms for j in sorted_atoms
+            if i < j
+            ],columns=['atom_1','atom_2','A','B'])
+
 
 ###_* example usage
 # if __name__ == '__main__':

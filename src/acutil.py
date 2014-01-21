@@ -53,7 +53,7 @@ def run_antechamber(execpath,filename,printonly=False):
 def convert_filetype(origin,target):
     ## origin, target: full filenames of 'from' and 'to'
     ## calls openbabel
-    subprocess.call('babel -i %s %s.mol -o %s %s.%s' %
+    subprocess.call('babel -i %s %s -o %s %s' %
                     (os.path.splitext(origin)[0][1:],origin,
                      os.path.splitext(target)[0][1:],target),
                     shell=True)

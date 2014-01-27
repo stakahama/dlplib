@@ -61,8 +61,8 @@ class GAFFparms:
         tables['atoms'] = self._asdframe(main[0],1,defpatt,('mass','unknown'))
         tables['bonds'] = self._asdframe(main[1],1,defpatt,('k','r'))
         tables['angles'] = self._asdframe(main[2],0,defpatt,('k','theta'))
-        tables['imprdihedrals'] = self._asdframe(main[3],0,None,('int','A','gamma','m'))
-        tables['propdihedrals'] = self._asdframe(main[4],0,None,('A','gamma','m'))
+        tables['propdihedrals'] = self._asdframe(main[3],0,None,('int','A','gamma','m'))
+        tables['imprdihedrals'] = self._asdframe(main[4],0,None,('A','gamma','m'))
         tables['lennjo'] = self._asdframe(main[7],1,defpatt,('Rstar','epsilon'))
         self.parms = tables
 
@@ -96,8 +96,8 @@ class GAFFparms:
         keys = self.keys.labels['angles']
         return map(self.test_reverse(index),keys)
 
-    def match_imprdihedrals(self):
-        index = self.parms['imprdihedrals'].index        
+    def match_propdihedrals(self):
+        index = self.parms['propdihedrals'].index        
         keys = self.keys.labels['dihedrals']
         fn = self.test_reverse(index)
         out = []
@@ -113,8 +113,8 @@ class GAFFparms:
             out.append(None)
         return out
 
-    def match_propdihedrals(self):
-        index = self.parms['propdihedrals'].index        
+    def match_imprdihedrals(self):
+        index = self.parms['imprdihedrals'].index        
         keys = self.keys.labels['dihedrals']
         fn = self.test_reverse(index)
         out = []    
@@ -191,22 +191,48 @@ class GAFFparms:
                join(parms)
         # out = pd.merge(molec.reset_index(),gaff,how='left',on=atypes).set_index('index')
         out = pd.merge(molec,gaff,how='left',on=atypes)
-        
         return out.drop(atypes,axis=1)
+
+    # def _treat_dihedrals(self,extracted):
+    #     atoms = map('atom_{:d}'.format,range(1,4+1))                    
+    #     onlypositives = lambda x: x.ix[x['m'].astype('float') > 0]
+    #     missing = extracted['propdihedrals'].ix[:,'m'].isnull()
+    #     if pd.np.any(missing):
+    #         positiveimpr = onlypositives(extracted['imprdihedrals'])
+    #         extracted['dihedrals'] = pd.merge(
+    #             extracted['propdihedrals'].ix[pd.np.logical_not(missing)],
+    #             pd.merge(extracted['propdihedrals'].ix[missing,atoms],
+    #                      positiveimpr,on=atoms,how='left'),
+    #             how='outer')
+    #     else:
+    #         extracted['dihedrals'] = extracted['propdihedrals']
+    #         if pd.np.any(extracted['dihedrals'][atoms].duplicated()):
+    #             extracted['dihedrals'] = onlypositives(extracted['dihedrals'])
+    #     return extracted
+    
+    def _extract_dihedrals(self,names):
+        def onlypositives(dframe):
+            return dframe.ix[dframe['m'].astype('float') > 0]
+        def firstmatches(dframe):
+            keys = dframe.index.tolist()
+            firstmatch = [keys.index(k) for k in set(keys)]
+            return dframe.irow(firstmatch)
+        extracted = OrderedDict()
+        for x in names:
+            dihparms = firstmatches(onlypositives(self.parms[x]))
+            extracted[x] = self.merge(dihparms,self.index[x],self.keys.index['dihedrals'])
+        extracted['dihedrals'] = extracted['propdihedrals']
+        return extracted
 
     def extract_parms(self):
         extracted = OrderedDict()
-        for x in ['atoms','bonds','angles','propdihedrals','imprdihedrals']:
-            x_ = x if 'dihedrals' not in x else 'dihedrals'
-            extracted[x] = self.merge(self.parms[x],self.index[x],self.keys.index[x_])
-        missing = extracted['propdihedrals'].ix[:,-1].isnull()
-        atoms = map('atom_{:d}'.format,range(1,4+1))
-        if pd.np.any(missing):
-            extracted['dihedrals'] = pd.merge(extracted['propdihedrals'].ix[missing,atoms],
-                                              extracted['imprdihedrals'],on=atoms,
-                                              how='outer')
-        else:
-            extracted['dihedrals'] = extracted['propdihedrals']
+        for x in ['atoms','bonds','angles']:
+            extracted[x] = self.merge(self.parms[x],self.index[x],self.keys.index[x])
+        extracted.update(self._extract_dihedrals(['propdihedrals','imprdihedrals']))
+        # extracted = self._treat_dihedrals(extracted)
+        dlptypes = [('bonds','harm'),('angles','harm'),('dihedrals','cos')]
+        for k,x in dlptypes:
+            extracted[k].insert(0,'parameterization',x)
         self.extracted = extracted
 
     def lennjopairs(self,atoms):
@@ -214,14 +240,19 @@ class GAFFparms:
             rstar_ = rstar.mean()
             epsilon_ = epsilon.prod()**0.5
             return (epsilon_*rstar_**12,2*epsilon_*rstar_**6)
-        sorted_atoms = sorted(atoms)
+        sorted_atoms = sorted(set(atoms))
         ljp = self.parms['lennjo'].convert_objects(convert_numeric=True)
-        self.ljparms = pd.DataFrame([
-            (i,j) + combine(ljp.ix[[i,j],'Rstar'],ljp.ix[[i,j],'epsilon'])
-            for i in sorted_atoms for j in sorted_atoms
-            if i < j
+        ljparms = pd.DataFrame([
+            (atom_1,atom_2) +
+            combine(ljp.ix[[atom_1,atom_2],'Rstar'],
+                    ljp.ix[[atom_1,atom_2],'epsilon'])
+            for i,atom_1 in enumerate(sorted_atoms)
+            for j,atom_2 in enumerate(sorted_atoms)
+            if i <= j
             ],columns=['atom_1','atom_2','A','B'])
-
+        ljparms.insert(2,'parameterization','12-6')
+        subset = ljparms[['A','B']].apply(lambda x: pd.np.all(x > 0),axis=1)
+        self.ljparms = ljparms.ix[subset]
 
 ###_* example usage
 # if __name__ == '__main__':
